@@ -1,11 +1,13 @@
 import time
-import pyttsx3
 import requests
 import json
 import re
+import sounddevice as sd
+from TTS.api import TTS
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.2"
+
 
 def query_ollama_stream(prompt, model=OLLAMA_MODEL):
     """Stream responses from Ollama API."""
@@ -31,28 +33,25 @@ def query_ollama_stream(prompt, model=OLLAMA_MODEL):
     except requests.exceptions.RequestException as e:
         yield f"[Network Error]: {e}"
 
-def speak_text(text):
-    """Speak a single piece of text using a fresh engine instance."""
+def speak_text(text: str):
+    """Speak a single piece of text using Coqui TTS on GPU."""
     try:
-        # Create a fresh engine instance for each speech
-        engine = pyttsx3.init()
-        engine.setProperty("rate", 170)
-        engine.setProperty("volume", 1.0)
-        
-        # Set voice if available
-        voices = engine.getProperty('voices')
-        if voices:
-            engine.setProperty('voice', voices[0].id)
-        
-        engine.say(text)
-        engine.runAndWait()
-        
-        # Clean up the engine
-        engine.stop()
-        del engine
-        
+        # Load model fresh (avoids keeping VRAM occupied)
+        tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", gpu=True,progress_bar=False)
+
+        # Generate waveform
+        waveform = tts.tts(text=text)
+
+        # Play
+        sd.play(waveform, samplerate=22050)
+        sd.wait()  # Wait until playback ends
+
+        # Free up model from memory
+        del tts
+
     except Exception as e:
         print(f"\n🔇 Speech error: {e}")
+
 
 def speak_stream(prompt):
     """Stream Ollama output and speak complete sentences naturally."""
@@ -101,100 +100,7 @@ def speak_stream(prompt):
     print("\n" + "-" * 50)
     print("✅ Done speaking!")
 
-def speak_stream_alternative(prompt):
-    """Alternative approach: Collect all text first, then speak by sentences."""
-    print("🤖 AI Response:")
-    print("-" * 50)
-    
-    # Collect all text first
-    full_text = ""
-    for chunk in query_ollama_stream(prompt):
-        if chunk and not chunk.startswith("[Network Error]"):
-            print(chunk, end='', flush=True)
-            full_text += chunk
-        elif chunk.startswith("[Network Error]"):
-            print(f"\n❌ {chunk}")
-            speak_text("Sorry, there was a network error.")
-            return
-    
-    print("\n" + "-" * 30)
-    
-    # Now split into sentences and speak each one
-    if full_text.strip():
-        # Split by sentence boundaries
-        sentences = re.split(r'([.!?]+\s*)', full_text)
-        
-        current_sentence = ""
-        for i, part in enumerate(sentences):
-            if re.match(r'[.!?]+\s*', part):  # This is punctuation
-                current_sentence += part
-                if current_sentence.strip():
-                    print(f"🗣️  Speaking: {current_sentence.strip()}")
-                    speak_text(current_sentence.strip())
-                    time.sleep(0.2)
-                current_sentence = ""
-            else:  # This is text
-                current_sentence += part
-        
-        # Speak any remaining text without punctuation
-        if current_sentence.strip():
-            print(f"🗣️  Speaking: {current_sentence.strip()}")
-            speak_text(current_sentence.strip())
-    
-    print("✅ Done speaking!")
-
-def interactive_mode():
-    """Run in interactive mode for multiple conversations."""
-    print("🎤 Interactive AI Voice Chat")
-    print("Type 'quit' or 'exit' to stop")
-    print("Type 'alt' to use alternative speaking mode")
-    print("=" * 50)
-    
-    use_alternative = False
-    
-    while True:
-        try:
-            user_input = input("\n💬 Your message: ").strip()
-            if user_input.lower() in ['quit', 'exit', 'q']:
-                print("👋 Goodbye!")
-                break
-            elif user_input.lower() == 'alt':
-                use_alternative = not use_alternative
-                mode = "alternative" if use_alternative else "streaming"
-                print(f"🔄 Switched to {mode} mode")
-                continue
-            
-            if not user_input:
-                print("Please enter a message.")
-                continue
-            
-            print()
-            if use_alternative:
-                speak_stream_alternative(user_input)
-            else:
-                speak_stream(user_input)
-            
-        except KeyboardInterrupt:
-            print("\n\n👋 Goodbye!")
-            break
-        except Exception as e:
-            print(f"\n❌ Error: {e}")
 
 # Example usage
 if __name__ == "__main__":
-    print("🎯 Choose your mode:")
-    print("1. Streaming mode (speaks sentences as they complete)")
-    print("2. Alternative mode (collects all text first, then speaks)")
-    print("3. Interactive mode")
-    
-    choice = input("\nEnter choice (1/2/3): ").strip()
-    
-    if choice == "1":
-        speak_stream("Tell me a short story about a robot learning to cook.")
-    elif choice == "2":
-        speak_stream_alternative("Tell me a short story about a robot learning to cook.")
-    elif choice == "3":
-        interactive_mode()
-    else:
-        print("Using streaming mode by default...")
-        speak_stream("Tell me a short story about a robot learning to cook.")
+    speak_stream("Tell be about the benefits of AI in healthcare.")
