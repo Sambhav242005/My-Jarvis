@@ -2,33 +2,31 @@ import requests
 import json
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "gemma3n"
+OLLAMA_MODEL = "gemma3:1b"
 
-def query_ollama_stream(prompt, model=OLLAMA_MODEL, max_tokens=120):
+def query_ollama_stream(prompt, model=OLLAMA_MODEL):
+    """Stream responses from Ollama API."""
     payload = {
         "model": model,
         "prompt": prompt,
-        "stream": True,  # ✅ enable streaming
-        "options": {"num_predict": max_tokens}
+        "stream": True
     }
     try:
-        with requests.post(OLLAMA_URL, json=payload, stream=True, timeout=(5, 300)) as r:
+        with requests.post(OLLAMA_URL, json=payload, stream=True) as r:
             r.raise_for_status()
             for line in r.iter_lines(decode_unicode=True):
-                if line:  # skip keep-alive new lines
+                if line:
                     try:
                         data = json.loads(line)
                         chunk = data.get("response", "")
                         if chunk:
-                            yield chunk  # send partial output to caller
+                            yield chunk
                         if data.get("done"):
                             break
                     except json.JSONDecodeError:
                         continue
     except requests.exceptions.RequestException as e:
         yield f"[Network Error]: {e}"
-
-
 
 # Example usage:
 if __name__ == "__main__":

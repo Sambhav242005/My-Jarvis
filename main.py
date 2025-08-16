@@ -6,12 +6,8 @@ import whisper
 import requests
 import webrtcvad
 from collections import deque
-
-# Disable Torch optimizations
-os.environ["TORCH_COMPILE_DISABLE"] = "1"
 import torch
-torch._dynamo.disable()
-torch.set_float32_matmul_precision('medium')
+from tts import speak_stream
 
 # Audio and model config
 RATE = 16000
@@ -27,29 +23,11 @@ SILENCE_DURATION = 1.0  # Seconds of silence to stop recording
 
 
 # Whisper and Ollama
-asr_model = whisper.load_model("large").to("cuda")
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2"
+asr_model = whisper.load_model("base").to("cuda")
 
 # VAD setup
 vad = webrtcvad.Vad()
 vad.set_mode(2)  # Increased sensitivity (0=least, 3=most)
-
-def query_ollama(prompt, model=OLLAMA_MODEL, max_tokens=120):
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"num_predict": max_tokens}
-    }
-    try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=(5,30))
-        if response.ok:
-            return response.json().get("response", "").strip()
-        else:
-            return f"[Error from Ollama]: {response.status_code} {response.text}"
-    except requests.exceptions.RequestException as e:
-        return f"[Network Error]: {e}"
 
 def record_until_silence(stream, silence_duration=SILENCE_DURATION, max_record_duration=10):
     frames = []
@@ -60,24 +38,24 @@ def record_until_silence(stream, silence_duration=SILENCE_DURATION, max_record_d
     total_chunks = 0
 
     print("🎤 Ready to record...")
-    
+
     while True:
         try:
             chunk = stream.read(CHUNK_SIZE, exception_on_overflow=False)
         except Exception as e:
             print(f"Audio read error: {e}")
             break
-            
+
         total_chunks += 1
-        
+
         # Check if chunk contains speech
         try:
             is_speech = vad.is_speech(chunk, RATE)
         except Exception :
             is_speech = False
-            
+
         ring_buffer.append((chunk, is_speech))
-        
+
         if is_speech:
             speech_chunk_count += 1
             if not speaking:
@@ -103,11 +81,11 @@ def record_until_silence(stream, silence_duration=SILENCE_DURATION, max_record_d
     if not speaking:
         print("❌ No speech detected")
         return b''
-    
+
     if speech_chunk_count < MIN_SPEECH_CHUNKS:
         print(f"❌ Insufficient speech chunks ({speech_chunk_count} < {MIN_SPEECH_CHUNKS})")
         return b''
-    
+
     duration = len(frames) * CHUNK_DURATION_MS / 1000
     if duration < MIN_AUDIO_LENGTH:
         print(f"❌ Audio too short ({duration:.2f}s < {MIN_AUDIO_LENGTH}s)")
@@ -119,23 +97,23 @@ def record_until_silence(stream, silence_duration=SILENCE_DURATION, max_record_d
 def pcm_to_float32(audio_bytes):
     if len(audio_bytes) == 0:
         return np.array([], dtype=np.float32)
-    
+
     audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
     audio_float = audio_np / 32768.0
-    
+
     # Check volume level
     rms_volume = np.sqrt(np.mean(audio_float**2))
     print(f"🔊 Audio RMS volume: {rms_volume:.4f}")
-    
+
     if rms_volume < MIN_VOLUME_THRESHOLD:
         print(f"❌ Audio volume too low ({rms_volume:.4f} < {MIN_VOLUME_THRESHOLD})")
         return np.array([], dtype=np.float32)
-    
+
     return audio_float
 
 def main():
     p = pyaudio.PyAudio()
-    
+
     try:
         stream = p.open(
             format=pyaudio.paInt16,
@@ -151,7 +129,7 @@ def main():
         print(f"   - Volume threshold: {MIN_VOLUME_THRESHOLD}")
         print(f"   - Speech chunks required: {MIN_SPEECH_CHUNKS}")
         print("\n💬 Speak anytime! (Ctrl+C to stop)\n")
-        
+
         while True:
             print("👂 Listening for speech...")
             audio_bytes = record_until_silence(stream)
@@ -159,28 +137,28 @@ def main():
             if len(audio_bytes) == 0:
                 print("⏭️  No valid audio detected, continuing to listen...\n")
                 continue
-                
+
             print("🔄 Converting audio...")
             audio_float32 = pcm_to_float32(audio_bytes)
-            
+
             if len(audio_float32) == 0:
                 print("⏭️  Audio failed volume check, continuing to listen...\n")
                 continue
-            
+
             print("📝 Transcribing...")
             try:
                 result = asr_model.transcribe(
-                    audio_float32, 
-                    language='en', 
+                    audio_float32,
+                    language='en',
                     fp16=torch.cuda.is_available(),
                     condition_on_previous_text=False,  # Avoid context bleeding
                     temperature=0.0  # More deterministic output
                 )
                 prompt = result["text"].strip()
-                
+
                 print(f"🎯 Raw transcription: '{prompt}'")
-                
-                    
+
+
             except Exception as e:
                 print(f"❌ Transcription error: {e}\n")
                 continue
@@ -188,9 +166,9 @@ def main():
             if prompt:
                 print(f"✅ You said: {prompt}")
                 print("🤖 AI is thinking...")
-                
+
                 try:
-                    response = query_ollama(prompt)
+                    response = speak_stream(prompt)
                     print(f"💭 AI: {response}\n")
                 except Exception as e:
                     print(f"❌ AI response error: {e}\n")
