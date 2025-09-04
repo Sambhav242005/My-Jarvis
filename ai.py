@@ -1,8 +1,6 @@
 import requests
 import json
-
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "gemma3:1b"
+from env import OLLAMA_URL, OLLAMA_MODEL
 
 def query_ollama_stream(prompt, model=OLLAMA_MODEL):
     """Stream responses from Ollama API."""

@@ -1,13 +1,12 @@
-import os
 import time
 import pyaudio
 import numpy as np
 import whisper
-import requests
 import webrtcvad
 from collections import deque
+from env import WHISPER_MODEL
 import torch
-from tts import speak_stream
+from tts import shutdown, speak_stream
 
 # Audio and model config
 RATE = 16000
@@ -19,11 +18,11 @@ CHANNELS = 1
 MIN_AUDIO_LENGTH = 0.5  # Minimum seconds of audio to process
 MIN_VOLUME_THRESHOLD = 0.005  # Minimum RMS volume threshold
 MIN_SPEECH_CHUNKS = 10  # Minimum chunks that must be detected as speech
-SILENCE_DURATION = 1.0  # Seconds of silence to stop recording
+SILENCE_DURATION = 1.5  # Seconds of silence to stop recording
 
 
 # Whisper and Ollama
-asr_model = whisper.load_model("base").to("cuda")
+asr_model = whisper.load_model(WHISPER_MODEL).to("cuda")
 
 # VAD setup
 vad = webrtcvad.Vad()
@@ -152,7 +151,8 @@ def main():
                     language='en',
                     fp16=torch.cuda.is_available(),
                     condition_on_previous_text=False,  # Avoid context bleeding
-                    temperature=0.0  # More deterministic output
+                    temperature=0.0,  # More deterministic output
+                    initial_prompt="The wake word is 'Jarvis'. Listen carefully for it."  # 👈 bias
                 )
                 prompt = result["text"].strip()
 
@@ -163,7 +163,7 @@ def main():
                 print(f"❌ Transcription error: {e}\n")
                 continue
 
-            if prompt:
+            if prompt and  "jarvis" in prompt.lower():
                 print(f"✅ You said: {prompt}")
                 print("🤖 AI is thinking...")
 
@@ -184,6 +184,7 @@ def main():
             stream.stop_stream()
             stream.close()
         p.terminate()
+        shutdown()  # Ensure TTS thread is stopped gracefully
 
 if __name__ == "__main__":
     main()
